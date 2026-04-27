@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Moisture Monitor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f4f4f4; color: #111; padding: 24px; }
+    h1 { font-size: 22px; font-weight: 500; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #666; margin-bottom: 24px; }
+    .status { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; font-size: 13px; color: #666; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
+    .dot.ok { background: #1D9E75; }
+    .dot.err { background: #E24B4A; }
+    .dot.loading { background: #FAC775; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .card { background: #fff; border-radius: 8px; padding: 16px; border: 0.5px solid #ddd; }
+    .card-label { font-size: 13px; color: #666; margin-bottom: 6px; }
+    .card-value { font-size: 24px; font-weight: 500; }
+    .chart-wrap { position: relative; width: 100%; height: 260px; background: #fff; border-radius: 8px; border: 0.5px solid #ddd; padding: 16px; margin-bottom: 24px; }
+    .legend { display: flex; gap: 16px; font-size: 12px; color: #666; margin-bottom: 8px; align-items: center; }
+    .legend-box { width: 10px; height: 10px; border-radius: 2px; background: #1D9E75; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; border: 0.5px solid #ddd; }
+    th { padding: 10px 16px; text-align: left; background: #f9f9f9; color: #666; font-weight: 500; border-bottom: 0.5px solid #ddd; }
+    th:not(:first-child) { text-align: right; }
+    td { padding: 8px 16px; border-top: 0.5px solid #eee; }
+    td:not(:first-child) { text-align: right; }
+    .refresh-btn { font-size: 13px; padding: 6px 14px; border: 0.5px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; margin-left: 8px; }
+    .refresh-btn:hover { background: #f0f0f0; }
+    .last-updated { font-size: 12px; color: #999; margin-top: 12px; }
+  </style>
+</head>
+<body>
+
+  <h1>Moisture monitor</h1>
+  <p class="subtitle">Live data from Arduino via Google Sheets</p>
+
+  <div class="status">
+    <span class="dot loading" id="status-dot"></span>
+    <span id="status-text">Loading...</span>
+    <button class="refresh-btn" onclick="fetchData()">Refresh</button>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Latest moisture</div>
+      <div class="card-value" id="stat-percent">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Raw value</div>
+      <div class="card-value" id="stat-raw">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Voltage</div>
+      <div class="card-value" id="stat-volts">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total readings</div>
+      <div class="card-value" id="stat-count">—</div>
+    </div>
+  </div>
+
+  <div class="chart-wrap">
+    <div class="legend"><span class="legend-box"></span> Moisture %</div>
+    <canvas id="moistureChart" role="img" aria-label="Line chart of moisture percentage over time"></canvas>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Device</th>
+        <th>Moisture %</th>
+        <th>Raw</th>
+        <th>Volts</th>
+      </tr>
+    </thead>
+    <tbody id="table-body">
+      <tr><td colspan="5" style="text-align:center;padding:16px;color:#999;">Loading...</td></tr>
+    </tbody>
+  </table>
+
+  <p class="last-updated" id="last-updated"></p>
+
+  <script>
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzth7fdzlAMcWxf7XVo1GCyNEMkTJn5x5mC4Wwr6t7zZpq5WhOYis2SVjZTKJ9u1jbMAg/exec";
+    let chart = null;
+
+    function formatTime(val) {
+      if (!val) return "—";
+      const d = new Date(val);
+      return isNaN(d) ? String(val) : d.toLocaleString();
+    }
+
+    function setStatus(state, msg) {
+      const dot = document.getElementById("status-dot");
+      dot.className = "dot " + (state === "ok" ? "ok" : state === "err" ? "err" : "loading");
+      document.getElementById("status-text").textContent = msg;
+    }
+
+    async function fetchData() {
+      setStatus("loading", "Fetching...");
+      try {
+        const res = await fetch(APPS_SCRIPT_URL);
+        const data = await res.json();
+
+        if (!Array.isArray(data) || data.length === 0) {
+          setStatus("err", "No data yet");
+          document.getElementById("table-body").innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#999;">No readings found in your sheet yet.</td></tr>';
+          return;
+        }
+
+        setStatus("ok", "Connected");
+
+        const latest = data[data.length - 1];
+        document.getElementById("stat-percent").textContent = latest.percent !== "" ? parseFloat(latest.percent).toFixed(1) + "%" : "—";
+        document.getElementById("stat-raw").textContent = latest.raw || "—";
+        document.getElementById("stat-volts").textContent = latest.volts !== "" ? parseFloat(latest.volts).toFixed(2) + "V" : "—";
+        document.getElementById("stat-count").textContent = data.length;
+
+        const last20 = data.slice(-20);
+        const labels = last20.map(r => {
+          const d = new Date(r.date);
+          return isNaN(d) ? String(r.date) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        });
+        const percents = last20.map(r => r.percent !== "" ? parseFloat(r.percent) : null);
+
+        if (chart) {
+          chart.data.labels = labels;
+          chart.data.datasets[0].data = percents;
+          chart.update();
+        } else {
+          chart = new Chart(document.getElementById("moistureChart"), {
+            type: "line",
+            data: {
+              labels,
+              datasets: [{
+                label: "Moisture %",
+                data: percents,
+                borderColor: "#1D9E75",
+                backgroundColor: "rgba(29,158,117,0.08)",
+                borderWidth: 2,
+                pointRadius: 3,
+                tension: 0.3,
+                fill: true
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { display: false } },
+              scales: {
+                x: { ticks: { autoSkip: true, maxRotation: 45, font: { size: 11 } } },
+                y: { ticks: { callback: v => v + "%" } }
+              }
+            }
+          });
+        }
+
+        const rows = data.slice(-10).reverse().map(r => `
+          <tr>
+            <td style="color:#666;">${formatTime(r.date)}</td>
+            <td>${r.device || "—"}</td>
+            <td>${r.percent !== "" ? parseFloat(r.percent).toFixed(1) + "%" : "—"}</td>
+            <td>${r.raw || "—"}</td>
+            <td>${r.volts !== "" ? parseFloat(r.volts).toFixed(2) + "V" : "—"}</td>
+          </tr>`).join("");
+        document.getElementById("table-body").innerHTML = rows;
+        document.getElementById("last-updated").textContent = "Last updated: " + new Date().toLocaleTimeString();
+
+      } catch (err) {
+        setStatus("err", "Could not reach Apps Script — check it is deployed as Anyone");
+        document.getElementById("table-body").innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#999;">Error loading data.</td></tr>';
+      }
+    }
+
+    fetchData();
+    setInterval(fetchData, 30000);
+  </script>
+
+</body>
+</html>
