@@ -9,6 +9,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: sans-serif; background: #f4f4f4; color: #111; padding: 24px; }
     h1 { font-size: 22px; font-weight: 500; margin-bottom: 4px; }
+    h2 { font-size: 16px; font-weight: 500; margin-bottom: 12px; margin-top: 32px; }
     .subtitle { font-size: 13px; color: #666; margin-bottom: 24px; }
     .status { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; font-size: 13px; color: #666; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
@@ -19,14 +20,19 @@
     .card { background: #fff; border-radius: 8px; padding: 16px; border: 0.5px solid #ddd; }
     .card-label { font-size: 13px; color: #666; margin-bottom: 6px; }
     .card-value { font-size: 24px; font-weight: 500; }
+    .card-value.pump-on { color: #1D9E75; }
+    .card-value.pump-off { color: #E24B4A; }
     .chart-wrap { position: relative; width: 100%; height: 260px; background: #fff; border-radius: 8px; border: 0.5px solid #ddd; padding: 16px; margin-bottom: 24px; }
     .legend { display: flex; gap: 16px; font-size: 12px; color: #666; margin-bottom: 8px; align-items: center; }
     .legend-box { width: 10px; height: 10px; border-radius: 2px; background: #1D9E75; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; border: 0.5px solid #ddd; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border-radius: 8px; overflow: hidden; border: 0.5px solid #ddd; margin-bottom: 24px; }
     th { padding: 10px 16px; text-align: left; background: #f9f9f9; color: #666; font-weight: 500; border-bottom: 0.5px solid #ddd; }
     th:not(:first-child) { text-align: right; }
     td { padding: 8px 16px; border-top: 0.5px solid #eee; }
     td:not(:first-child) { text-align: right; }
+    .pump-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+    .pump-badge.on { background: #d4f5ea; color: #1D9E75; }
+    .pump-badge.off { background: #fde8e8; color: #E24B4A; }
     .refresh-btn { font-size: 13px; padding: 6px 14px; border: 0.5px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; margin-left: 8px; }
     .refresh-btn:hover { background: #f0f0f0; }
     .last-updated { font-size: 12px; color: #999; margin-top: 12px; }
@@ -60,6 +66,14 @@
       <div class="card-label">Total readings</div>
       <div class="card-value" id="stat-count">—</div>
     </div>
+    <div class="card">
+      <div class="card-label">Pump status</div>
+      <div class="card-value" id="stat-pump">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Times pump ran</div>
+      <div class="card-value" id="stat-pump-count">—</div>
+    </div>
   </div>
 
   <div class="chart-wrap">
@@ -67,6 +81,7 @@
     <canvas id="moistureChart" role="img" aria-label="Line chart of moisture percentage over time"></canvas>
   </div>
 
+  <h2>Recent sensor readings</h2>
   <table>
     <thead>
       <tr>
@@ -75,10 +90,26 @@
         <th>Moisture %</th>
         <th>Raw</th>
         <th>Volts</th>
+        <th>Pump</th>
       </tr>
     </thead>
     <tbody id="table-body">
-      <tr><td colspan="5" style="text-align:center;padding:16px;color:#999;">Loading...</td></tr>
+      <tr><td colspan="6" style="text-align:center;padding:16px;color:#999;">Loading...</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pump history</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Device</th>
+        <th>Moisture % at trigger</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="pump-table-body">
+      <tr><td colspan="4" style="text-align:center;padding:16px;color:#999;">Loading...</td></tr>
     </tbody>
   </table>
 
@@ -108,18 +139,27 @@
 
         if (!Array.isArray(data) || data.length === 0) {
           setStatus("err", "No data yet");
-          document.getElementById("table-body").innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#999;">No readings found in your sheet yet.</td></tr>';
+          document.getElementById("table-body").innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:#999;">No readings found.</td></tr>';
           return;
         }
 
         setStatus("ok", "Connected");
 
+        // --- CARDS ---
         const latest = data[data.length - 1];
         document.getElementById("stat-percent").textContent = latest.percent !== "" ? parseFloat(latest.percent).toFixed(1) + "%" : "—";
         document.getElementById("stat-raw").textContent = latest.raw || "—";
         document.getElementById("stat-volts").textContent = latest.volts !== "" ? parseFloat(latest.volts).toFixed(2) + "V" : "—";
         document.getElementById("stat-count").textContent = data.length;
 
+        const pumpEl = document.getElementById("stat-pump");
+        pumpEl.textContent = latest.pump || "—";
+        pumpEl.className = "card-value " + (latest.pump === "ON" ? "pump-on" : latest.pump === "OFF" ? "pump-off" : "");
+
+        const pumpOnCount = data.filter(r => r.pump === "ON").length;
+        document.getElementById("stat-pump-count").textContent = pumpOnCount;
+
+        // --- CHART ---
         const last20 = data.slice(-20);
         const labels = last20.map(r => {
           const d = new Date(r.date);
@@ -159,6 +199,7 @@
           });
         }
 
+        // --- SENSOR TABLE ---
         const rows = data.slice(-10).reverse().map(r => `
           <tr>
             <td style="color:#666;">${formatTime(r.date)}</td>
@@ -166,13 +207,25 @@
             <td>${r.percent !== "" ? parseFloat(r.percent).toFixed(1) + "%" : "—"}</td>
             <td>${r.raw || "—"}</td>
             <td>${r.volts !== "" ? parseFloat(r.volts).toFixed(2) + "V" : "—"}</td>
+            <td><span class="pump-badge ${r.pump === 'ON' ? 'on' : 'off'}">${r.pump || "—"}</span></td>
           </tr>`).join("");
         document.getElementById("table-body").innerHTML = rows;
+
+        // --- PUMP HISTORY TABLE ---
+        const pumpRows = data.filter(r => r.pump === "ON").reverse().map(r => `
+          <tr>
+            <td style="color:#666;">${formatTime(r.date)}</td>
+            <td>${r.device || "—"}</td>
+            <td>${r.percent !== "" ? parseFloat(r.percent).toFixed(1) + "%" : "—"}</td>
+            <td><span class="pump-badge on">ON</span></td>
+          </tr>`).join("");
+        document.getElementById("pump-table-body").innerHTML = pumpRows || '<tr><td colspan="4" style="text-align:center;padding:16px;color:#999;">No pump activations recorded yet.</td></tr>';
+
         document.getElementById("last-updated").textContent = "Last updated: " + new Date().toLocaleTimeString();
 
       } catch (err) {
         setStatus("err", "Could not reach Apps Script — check it is deployed as Anyone");
-        document.getElementById("table-body").innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#999;">Error loading data.</td></tr>';
+        document.getElementById("table-body").innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px;color:#999;">Error loading data.</td></tr>';
       }
     }
 
